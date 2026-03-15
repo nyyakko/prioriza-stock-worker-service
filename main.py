@@ -1,9 +1,9 @@
-import pika
-import json
-import redis
 from pipe21 import *
 from yfinance import Tickers
+import json
 import os
+import pika
+import redis
 
 database = redis.Redis(host=os.getenv("REDIS_HOST"), port=int(os.getenv("REDIS_PORT")), db=0)
 
