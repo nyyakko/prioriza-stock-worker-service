@@ -12,6 +12,26 @@ REDIS_PORT  = os.getenv("REDIS_PORT")
 
 database = redis.Redis(host=REDIS_HOST, port=REDIS_PORT, db=0)
 
+class StockMessageConsumer:
+    def __init__(self, queueName):
+        self.queueName = queueName
+        self.connection = pika.BlockingConnection(
+            pika.ConnectionParameters(
+                host=RABBIT_HOST,
+                port=RABBIT_PORT,
+                # NOTE: I'm disabling heartbeat entirely because its not
+                # relevant to what i'm trying to achieve here
+                heartbeat=0,
+            ),
+        )
+        self.channel = self.connection.channel()
+        self.channel.queue_declare(queue=self.queueName)
+
+    def set_message_handler(self, handler):
+        self.channel.basic_consume(queue=self.queueName, on_message_callback=handler, auto_ack=True)
+
+    def start(self): self.channel.start_consuming()
+
 def request_handler(channel, method, properties, body):
     request = json.loads(body.decode())
 
@@ -40,18 +60,7 @@ def request_handler(channel, method, properties, body):
 
     database.set(requestId, json.dumps({ "id": requestId, "status": "finished", "result": json.dumps(result) }))
 
-connection = pika.BlockingConnection(
-    pika.ConnectionParameters(
-        host=RABBIT_HOST,
-        port=RABBIT_PORT,
-        # NOTE: I'm disabling heartbeat entirely because its not
-        # relevant to what i'm trying to achieve here
-        heartbeat=0,
-    ),
-)
-channel = connection.channel()
+consumer = StockMessageConsumer(queueName="stock-message-queue")
+consumer.set_message_handler(request_handler)
 
-channel.queue_declare(queue="stock-message-queue")
-channel.basic_consume(queue="stock-message-queue", on_message_callback=request_handler, auto_ack=True)
-
-channel.start_consuming()
+consumer.start()
