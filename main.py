@@ -15,22 +15,26 @@ def request_handler(channel, method, properties, body):
     database.set(requestId, json.dumps({ "id": requestId, "status": "processing", "result": None }))
     data = Tickers(" ".join(request["data"]))
 
-    try:
-        result = (
-            request["data"]
-                | Map(lambda ticker: {
-                    "ticker": ticker,
-                    "price": data.tickers[ticker].history(period="1d")["Close"].iat[0],
-                    "sector": {
-                        "sector": data.tickers[ticker].info.get("sectorKey"),
-                        "industry": data.tickers[ticker].info.get("industryKey")
-                    }
-                })
-                | Pipe(list)
-        )
-        database.set(requestId, json.dumps({ "id": requestId, "status": "finished", "result": json.dumps(result) }))
-    except RuntimeError as e:
-        database.set(requestId, json.dumps({ "id": requestId, "status": "failed", "result": json.dumps({ "error": e }) }))
+    def transformerFn(ticker):
+        try:
+            closingPrice = data.tickers[ticker].history(period="1d")["Close"].iat[0]
+            return {
+                "ticker": ticker,
+                "price": closingPrice,
+                "sector": {
+                    "sector": data.tickers[ticker].info.get("sectorKey"),
+                    "industry": data.tickers[ticker].info.get("industryKey")
+                }
+            }
+        except RuntimeError as e:
+            return {
+                "ticker": ticker,
+                "error": "ticker not found"
+            }
+
+    result = request["data"] | Map(transformerFn) | Pipe(list)
+
+    database.set(requestId, json.dumps({ "id": requestId, "status": "finished", "result": json.dumps(result) }))
 
 connection = pika.BlockingConnection(
     pika.ConnectionParameters(
