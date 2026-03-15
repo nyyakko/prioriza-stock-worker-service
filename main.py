@@ -5,7 +5,12 @@ import os
 import pika
 import redis
 
-database = redis.Redis(host=os.getenv("REDIS_HOST"), port=int(os.getenv("REDIS_PORT")), db=0)
+RABBIT_HOST = os.getenv("RABBIT_HOST")
+RABBIT_PORT = os.getenv("RABBIT_PORT")
+REDIS_HOST  = os.getenv("REDIS_HOST")
+REDIS_PORT  = os.getenv("REDIS_PORT")
+
+database = redis.Redis(host=REDIS_HOST, port=REDIS_PORT, db=0)
 
 def request_handler(channel, method, properties, body):
     request = json.loads(body.decode())
@@ -37,8 +42,8 @@ def request_handler(channel, method, properties, body):
 
 connection = pika.BlockingConnection(
     pika.ConnectionParameters(
-        host=os.getenv("RABBIT_HOST"),
-        port=int(os.getenv("RABBIT_PORT")),
+        host=RABBIT_HOST,
+        port=RABBIT_PORT,
         # NOTE: I'm disabling heartbeat entirely because its not
         # relevant to what i'm trying to achieve here
         heartbeat=0,
