@@ -34,8 +34,9 @@ connection = pika.BlockingConnection(
     pika.ConnectionParameters(
         host=os.getenv("RABBIT_HOST"),
         port=int(os.getenv("RABBIT_PORT")),
-        heartbeat=60,
-        blocked_connection_timeout=300
+        # NOTE: I'm disabling heartbeat entirely because its not
+        # relevant to what i'm trying to achieve here
+        heartbeat=0,
     ),
 )
 channel = connection.channel()
