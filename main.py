@@ -15,24 +15,23 @@ def request_handler(channel, method, properties, body):
     database.set(requestId, json.dumps({ "id": requestId, "status": "processing", "result": None }))
     data = Tickers(" ".join(request["data"]))
 
-    def transformerFn(ticker):
-        try:
-            closingPrice = data.tickers[ticker].history(period="1d")["Close"].iat[0]
+    def getTickerInfoFn(ticker):
+        closingPrice = data.tickers[ticker].history(period="1d")["Close"]
+        if not closingPrice.empty:
             return {
                 "ticker": ticker,
-                "price": closingPrice,
+                "price": closingPrice.iat[0],
                 "sector": {
                     "sector": data.tickers[ticker].info.get("sectorKey"),
                     "industry": data.tickers[ticker].info.get("industryKey")
                 }
             }
-        except RuntimeError as e:
+        else:
             return {
-                "ticker": ticker,
-                "error": "ticker not found"
+                "error": f"ticker '{ticker}' not found"
             }
 
-    result = request["data"] | Map(transformerFn) | Pipe(list)
+    result = request["data"] | Map(getTickerInfoFn) | Pipe(list)
 
     database.set(requestId, json.dumps({ "id": requestId, "status": "finished", "result": json.dumps(result) }))
 
