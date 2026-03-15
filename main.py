@@ -15,20 +15,22 @@ def request_handler(channel, method, properties, body):
     database.set(requestId, json.dumps({ "id": requestId, "status": "processing", "result": None }))
     data = Tickers(" ".join(request["data"]))
 
-    result = (
-        request["data"]
-            | Map(lambda ticker: {
-                "ticker": ticker,
-                "price": data.tickers[ticker].history(period="1d")["Close"].iat[0],
-                "sector": {
-                    "sector": data.tickers[ticker].info.get("sectorKey"),
-                    "industry": data.tickers[ticker].info.get("industryKey")
-                }
-            })
-            | Pipe(list)
-    )
-
-    database.set(requestId, json.dumps({ "id": requestId, "status": "finished", "result": json.dumps(result) }))
+    try:
+        result = (
+            request["data"]
+                | Map(lambda ticker: {
+                    "ticker": ticker,
+                    "price": data.tickers[ticker].history(period="1d")["Close"].iat[0],
+                    "sector": {
+                        "sector": data.tickers[ticker].info.get("sectorKey"),
+                        "industry": data.tickers[ticker].info.get("industryKey")
+                    }
+                })
+                | Pipe(list)
+        )
+        database.set(requestId, json.dumps({ "id": requestId, "status": "finished", "result": json.dumps(result) }))
+    except RuntimeError as e:
+        database.set(requestId, json.dumps({ "id": requestId, "status": "failed", "result": json.dumps({ "error": e }) }))
 
 connection = pika.BlockingConnection(
     pika.ConnectionParameters(
