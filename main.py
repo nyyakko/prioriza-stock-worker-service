@@ -8,7 +8,7 @@ import redis
 import signal
 
 worker = {
-    "config": {
+    "services": {
         "rabbit": {
             "host": os.getenv("RABBIT_HOST"),
             "port": os.getenv("RABBIT_PORT")
@@ -24,7 +24,7 @@ worker = {
     }
 }
 
-database = redis.Redis(host=worker["config"]["redis"]["host"], port=worker["config"]["redis"]["port"], db=0)
+database = redis.Redis(host=worker["services"]["redis"]["host"], port=worker["services"]["redis"]["port"], db=0)
 
 def signal_handler(_signum, _frame):
     global worker
@@ -57,8 +57,8 @@ class StockMessageConsumer:
         self.queueName = queueName
         self.connection = pika.BlockingConnection(
             pika.ConnectionParameters(
-                host=worker["config"]["rabbit"]["host"],
-                port=worker["config"]["rabbit"]["port"],
+                host=worker["services"]["rabbit"]["host"],
+                port=worker["services"]["rabbit"]["port"],
                 # NOTE: I'm disabling heartbeat entirely because its not
                 # relevant to what i'm trying to achieve here
                 heartbeat=0,
