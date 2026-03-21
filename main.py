@@ -8,7 +8,7 @@ import redis
 import signal
 
 worker = {
-    "dependencies": {
+    "config": {
         "rabbit": {
             "host": os.getenv("RABBIT_HOST"),
             "port": os.getenv("RABBIT_PORT")
@@ -24,19 +24,20 @@ worker = {
     }
 }
 
-database = redis.Redis(host=worker["dependencies"]["redis"]["host"], port=worker["dependencies"]["redis"]["port"], db=0)
+database = redis.Redis(host=worker["config"]["redis"]["host"], port=worker["config"]["redis"]["port"], db=0)
 
-def signal_term_handler(_signum, _frame):
+def signal_handler(_signum, _frame):
     global worker
     state = worker["state"]
     state["isScheduledToDeletion"] = True
 
-    print("[WARN] Received SIGTERM")
+    print("[WARN] Received a signal to terminate, scheduling to deletion")
 
     if not state["isProcessingMessage"]:
         sys.exit()
 
-signal.signal(signal.SIGTERM, signal_term_handler)
+signal.signal(signal.SIGTERM, signal_handler)
+signal.signal(signal.SIGINT, signal_handler)
 
 @contextmanager
 def signal_handler_context():
@@ -48,6 +49,7 @@ def signal_handler_context():
     finally:
         state["isProcessingMessage"] = False
         if state["isScheduledToDeletion"]:
+            print("[WARN] Scheduled to deletion, terminating...")
             sys.exit()
 
 class StockMessageConsumer:
@@ -55,8 +57,8 @@ class StockMessageConsumer:
         self.queueName = queueName
         self.connection = pika.BlockingConnection(
             pika.ConnectionParameters(
-                host=worker["dependencies"]["rabbit"]["host"],
-                port=worker["dependencies"]["rabbit"]["port"],
+                host=worker["config"]["rabbit"]["host"],
+                port=worker["config"]["rabbit"]["port"],
                 # NOTE: I'm disabling heartbeat entirely because its not
                 # relevant to what i'm trying to achieve here
                 heartbeat=0,
@@ -73,9 +75,7 @@ class StockMessageConsumer:
 
     def start(self): self.channel.start_consuming()
 
-    def stop(self):
-        self.channel.stop_consuming()
-        self.channel.close()
+    def stop(self): self.channel.close()
 
 def request_handler(channel, method, properties, body):
     with signal_handler_context():
