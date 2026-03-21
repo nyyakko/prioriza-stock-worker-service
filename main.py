@@ -1,24 +1,62 @@
+from contextlib import contextmanager
 from pipe21 import *
 from yfinance import Tickers
 import json
 import os
 import pika
 import redis
+import signal
 
-RABBIT_HOST = os.getenv("RABBIT_HOST")
-RABBIT_PORT = os.getenv("RABBIT_PORT")
-REDIS_HOST  = os.getenv("REDIS_HOST")
-REDIS_PORT  = os.getenv("REDIS_PORT")
+worker = {
+    "dependencies": {
+        "rabbit": {
+            "host": os.getenv("RABBIT_HOST"),
+            "port": os.getenv("RABBIT_PORT")
+        },
+        "redis": {
+            "host": os.getenv("REDIS_HOST"),
+            "port": os.getenv("REDIS_PORT")
+        }
+    },
+    "state": {
+        "isProcessingMessage": False,
+        "isScheduledToDeletion": False
+    }
+}
 
-database = redis.Redis(host=REDIS_HOST, port=REDIS_PORT, db=0)
+database = redis.Redis(host=worker["dependencies"]["redis"]["host"], port=worker["dependencies"]["redis"]["port"], db=0)
+
+def signal_term_handler(_signum, _frame):
+    global worker
+    state = worker["state"]
+    state["isScheduledToDeletion"] = True
+
+    print("[WARN] Received SIGTERM")
+
+    if not state["isProcessingMessage"]:
+        sys.exit()
+
+signal.signal(signal.SIGTERM, signal_term_handler)
+
+@contextmanager
+def signal_handler_context():
+    global worker
+    state = worker["state"]
+    state["isProcessingMessage"] = True
+    try:
+        yield
+    finally:
+        state["isProcessingMessage"] = False
+        if state["isScheduledToDeletion"]:
+            sys.exit()
 
 class StockMessageConsumer:
     def __init__(self, queueName):
         self.queueName = queueName
         self.connection = pika.BlockingConnection(
             pika.ConnectionParameters(
-                host=RABBIT_HOST,
-                port=RABBIT_PORT,
+                host=worker["dependencies"]["rabbit"]["host"],
+                port=worker["dependencies"]["rabbit"]["port"],
                 # NOTE: I'm disabling heartbeat entirely because its not
                 # relevant to what i'm trying to achieve here
                 heartbeat=0,
@@ -27,40 +65,47 @@ class StockMessageConsumer:
         self.channel = self.connection.channel()
         self.channel.queue_declare(queue=self.queueName)
 
+    def __enter__(self): return self
+    def __exit__(self): self.stop()
+
     def set_message_handler(self, handler):
         self.channel.basic_consume(queue=self.queueName, on_message_callback=handler, auto_ack=True)
 
     def start(self): self.channel.start_consuming()
 
+    def stop(self):
+        self.channel.stop_consuming()
+        self.channel.close()
+
 def request_handler(channel, method, properties, body):
-    request = json.loads(body.decode())
+    with signal_handler_context():
+        request = json.loads(body.decode())
+        requestId = request["id"]
 
-    requestId = request["id"]
+        database.set(requestId, json.dumps({ "id": requestId, "status": "processing", "result": None }))
 
-    database.set(requestId, json.dumps({ "id": requestId, "status": "processing", "result": None }))
-    data = Tickers(" ".join(request["data"]))
+        data = Tickers(" ".join(request["data"]))
 
-    def getTickerInfoFn(ticker):
-        closingPrice = data.tickers[ticker].history(period="1d")["Close"]
-        if not closingPrice.empty:
-            return {
-                "ticker": ticker,
-                "price": closingPrice.iat[0],
-                "sector": {
-                    "sector": data.tickers[ticker].info.get("sectorKey"),
-                    "industry": data.tickers[ticker].info.get("industryKey")
+        def get_ticker_info(ticker):
+            closingPrice = data.tickers[ticker].history(period="1d")["Close"]
+            if not closingPrice.empty:
+                return {
+                    "ticker": ticker,
+                    "price": closingPrice.iat[0],
+                    "sector": {
+                        "sector": data.tickers[ticker].info.get("sectorKey"),
+                        "industry": data.tickers[ticker].info.get("industryKey")
+                    }
                 }
-            }
-        else:
-            return {
-                "error": f"ticker '{ticker}' not found"
-            }
+            else:
+                return {
+                    "error": f"ticker '{ticker}' not found"
+                }
 
-    result = request["data"] | Map(getTickerInfoFn) | Pipe(list)
+        result = request["data"] | Map(get_ticker_info) | Pipe(list)
 
-    database.set(requestId, json.dumps({ "id": requestId, "status": "finished", "result": json.dumps(result) }))
+        database.set(requestId, json.dumps({ "id": requestId, "status": "finished", "result": json.dumps(result) }))
 
 consumer = StockMessageConsumer(queueName="stock-message-queue")
 consumer.set_message_handler(request_handler)
-
 consumer.start()
